@@ -18,7 +18,7 @@
 - 会话验证：`GET https://u.bjmania.com/api/auth/me`。
 - 成绩：`POST /api/WebUI/GetDdrScores`，gRPC-Web protobuf，空消息请求有 5 字节帧头。
 - 响应字段 1 为重复成绩记录，字段 2 为业务状态。成绩记录字段：1 music ID、2 note type、3 rank、4 clear kind、5 score、6 Unix 秒时间、7 flare。
-- gRPC-Web 帧长、protobuf 边界与 trailer 状态均校验；业务非零状态不写入本地成绩快照。
+- gRPC-Web 帧长、protobuf 边界与 trailer 状态均校验。消息字段 `status` 不等同于传输层的 `grpc-status`：真实成功响应可带 `status=1`；BJMania 前端的 `getDdrScores()` 直接读取 `ddr_scores`，应用遵循同一行为，不用「非零即失败」规则拦截成绩。HTTP、gRPC 或解析失败仍保留上次成功快照。
 - 公开版本表：`https://assets.bjmania.com/mdb/ver.json`，读取 `MDX.mdb` 中最大的版本号；数据库为 `/mdb/MDX_mdb_{version}.bin`。
 - 数据库记录字段：1 mcode、2 basename、3 title、4 title_yomi、5 artist、6 series、7 diffLv。
 - 核对前端构建：`main-OGPHD5HR.js`；DDR 成绩页面模块 `chunk-GSC5PKSO.js`；Flare 表及等级 `chunk-IKWVGF57.js`；MDB 结构 `chunk-TUP3DNQX.js`；API/成绩 protobuf `chunk-MJTKKJZ7.js`。这些文件名可能随网站发布变化。

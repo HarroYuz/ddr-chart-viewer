@@ -33,8 +33,10 @@ class BjmClient(context: Context) {
         BjmAuthDiagnostics.event("score_sync start=true")
         val user = authMe()
         val body = requestGrpc("/api/WebUI/GetDdrScores")
+        // The website consumes ddr_scores regardless of the protobuf status field.
+        // It is not grpc-status: real successful score responses also contain 1.
+        // HTTP and gRPC transport errors are checked before accepting the payload.
         val decoded = DdrScoreProto.decodeGrpcWeb(body)
-        if (decoded.status != 0) throw BjmException("BJM 返回业务状态 ${decoded.status}，保留上次成绩")
         BjmAuthDiagnostics.event("score_sync completed=true status=${decoded.status} count=${decoded.scores.size}")
         BjmSyncResult(user = user, scores = decoded.scores, status = decoded.status)
     }

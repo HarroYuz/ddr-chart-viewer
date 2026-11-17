@@ -8,7 +8,7 @@
 ./gradlew -p android :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
 ```
 
-- 33 项单元测试通过，0 失败。
+- 35 项单元测试通过，0 失败。
 - Android Lint：0 error；仍有依赖新版本、WebView JavaScript 使用和 KTX 写法等建议。登录页需要 JavaScript；未增加原生 JavaScript bridge，也未将日志输出设为默认开启。
 - Debug APK 构建成功，可安装。
 - `v0.1.0` Release APK 构建成功，启用 R8/资源压缩，并使用用户指定的 IIDX 共享签名。
@@ -40,10 +40,18 @@
 - 关闭模拟器 Wi-Fi 和移动数据、强制停止并重新启动，曲库、DP 选择和已有曲绘可恢复。
 - 通过注入明确标为 `UI TEST FIXTURE` 的本地合成成绩检查成绩与 Skill 界面：Lv.12 / Flare IX 显示 Skill 785、WHITE 1/30、总对象数 1/90、等级 NONE +；该数据不来自真实账号。
 
+## BJMania 登录后同步失败修复
+
+- 用户在模拟器中亲自登录后复现：身份验证与成绩请求均返回 HTTP 200，但应用因 protobuf 消息中的 `status=1` 拒绝写入成绩，界面仍显示「尚未同步账户」。
+- 原因是把消息的 `status` 误当成「非零即失败」的返回码。已对照 BJMania 当前公开前端：`getDdrScores()` 直接读取 `ddr_scores`，不使用该规则。现已移除错误拦截，HTTP、gRPC trailer 和 protobuf 边界校验继续生效。
+- 新增合成回归用例，覆盖 `status=1` 与 `grpc-status=0` 的成绩响应，以及 `status=1` 不能掩盖 gRPC 认证失败；没有把真实账号资料或成绩保存到测试 fixture。
+- 修复后复用同一登录会话成功同步，成绩和 Flare 写入本地快照，SP / DP 的 Skill 与 IN TARGET 均显示对象谱面；覆盖安装后的会话可恢复。此项验证不等同于与网站逐条对账。
+- 将同签名、启用 R8 的 Release APK 覆盖安装到模拟器后再次同步成功，设置页同步时间更新；该 APK 将作为 Draft Release 附件。
+
 ## 尚未实测
 
-- 真实 BJMania 账号登录、会话过期恢复、私人数据权限和个人 Skill/IN TARGET 与网站逐项一致性。
+- BJMania 会话自然过期后的恢复、其他账号的私人数据权限，以及个人 Skill/IN TARGET 与网站逐项一致性。
 - 连续运行 24 小时后的系统后台任务实际触发时间，以及不同厂商省电策略下的调度。
-- 真实手机的长时间播放性能、所有源站谱面及正式签名安装升级。
+- 真实手机的长时间播放性能、所有源站谱面及真实手机上的安装升级。
 
 源码内的测试数据和以上 UI fixture 不能替代这些验证。

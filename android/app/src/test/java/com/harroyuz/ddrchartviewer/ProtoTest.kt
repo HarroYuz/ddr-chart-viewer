@@ -16,6 +16,21 @@ class ProtoTest {
         val s = decoded.scores.single()
         assertEquals(1234, s.musicId); assertEquals(7, s.slot); assertEquals(999123, s.score); assertEquals(10, s.flare); assertEquals(1_700_000_000, s.time)
     }
+    @Test fun successfulScoresCanHavePayloadStatusOne() {
+        // Synthetic response matching the live wire shape; contains no account data.
+        val decoded = DdrScoreProto.decodeGrpcWeb(
+            frame(response() + field(2, 1)) + frame("grpc-status: 0\r\n".toByteArray(), 128),
+        )
+        assertEquals(1, decoded.status)
+        assertEquals(1, decoded.scores.size)
+        assertEquals(999123, decoded.scores.single().score)
+        assertEquals(10, decoded.scores.single().flare)
+    }
+    @Test(expected = IllegalArgumentException::class) fun payloadStatusOneDoesNotHideGrpcFailure() {
+        DdrScoreProto.decodeGrpcWeb(
+            frame(response() + field(2, 1)) + frame("grpc-status: 16\r\n".toByteArray(), 128),
+        )
+    }
     @Test(expected = IllegalArgumentException::class) fun trailerErrorIsNotAnEmptySuccess() { DdrScoreProto.decodeGrpcWeb(frame(byteArrayOf()) + frame("grpc-status: 16\r\n".toByteArray(), 128)) }
     @Test(expected = IllegalArgumentException::class) fun truncatedFrameIsRejected() { DdrScoreProto.decodeGrpcWeb(frame(response()).dropLast(1).toByteArray()) }
     @Test(expected = IllegalArgumentException::class) fun oversizedUnknownFieldCannotOverflowReader() { DdrScoreProto.decodeGrpcWeb(frame(response() + varint(802) + varint(Long.MAX_VALUE))) }
