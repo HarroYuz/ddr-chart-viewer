@@ -8,7 +8,7 @@
 ./gradlew -p android :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
 ```
 
-- 40 项单元测试通过，0 失败。
+- 48 项单元测试通过，0 失败。
 - Android Lint：0 error；仍有依赖新版本、WebView JavaScript 使用和 KTX 写法等建议。登录页需要 JavaScript；未增加原生 JavaScript bridge，也未将日志输出设为默认开启。
 - Debug APK 构建成功，可安装。
 - `v0.1.0` Release APK 构建成功，启用 R8/资源压缩，并使用用户指定的 IIDX 共享签名。
@@ -55,6 +55,14 @@
 - 在手机宽度和宽屏宽度下测试 DP 八轨相邻中心距离一致，包括左右板交界；SP 轨距与 DP 相同，四轨整体居中。
 - 普通音符在判定时刻隐藏，长按头在持续区间固定于判定线，尾部结束后隐藏；测试停拍与延迟时相同 beat 对应的不同判定时刻，以及向前拖动后音符恢复。
 - 模拟器使用真实 SP / DP EXPERT 谱面检查播放、长按、Reverse 和固定流速；判定线后的已过音符不再继续滑出。
+
+## 播放器配置持久化、轮盘与 Constant
+
+- 新增 8 项回归测试：完整设置序列化恢复、旧倍率迁移、无效配置回退、不同开局 BPM / 高度下的 FHS 可见时间、Hi-Speed 精度、Constant 淡入边界及停拍/延迟时序、轮盘跨角度边界和死区处理。总计 48 项测试通过，Lint 无错误，Debug / Release 均构建成功。
+- 模拟器实际点击验证 Hi-Speed `6.00 → 6.01`、FHS `500 → 501`、Constant `1000 → 1010 ms`，Reverse 和 Constant 开关即时保存；输入高度 `650` 后谱面区域缩短。
+- 使用连续触摸事件长按 FHS 数值并顺时针转四分之一圈，`501 → 551`，轮盘出现、配置面板隐藏，松手后恢复面板。
+- 强制停止并重启应用后打开另一首曲目，核对 FHS、区域高度、Constant 与 Reverse 均恢复到已保存值。SP / DP 设置独立，旧版已保存的 Hi-Speed 自动迁移。
+- FHS 只按开局 BPM 校准，途中仍随 BPM 变化；移除原固定 300 BPM 选项。Constant 基于距离实际判定的谱面时间淡入，不改变 BPM / STOP / DELAY；数值限制为 10 ms 的整数倍。
 
 ## 尚未实测
 

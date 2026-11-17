@@ -14,8 +14,13 @@ class LocalStore(context: Context) {
     var mode: PlayMode
         get() = runCatching { PlayMode.valueOf(preferences.getString("mode", "SP")!!) }.getOrDefault(PlayMode.SP)
         set(value) { preferences.edit().putString("mode", value.name).apply() }
-    fun speed(mode: PlayMode) = preferences.getFloat("speed-$mode", 2f)
-    fun saveSpeed(mode: PlayMode, value: Float) { preferences.edit().putFloat("speed-$mode", value).apply() }
+    fun playerSettings(mode: PlayMode): PlayerSettings = PlayerSettingsCodec.decode(
+        preferences.getString("player-$mode", null),
+        if (preferences.contains("speed-$mode")) preferences.getFloat("speed-$mode", 2f) else null,
+    )
+    fun savePlayerSettings(mode: PlayMode, settings: PlayerSettings) {
+        preferences.edit().putString("player-$mode", PlayerSettingsCodec.encode(settings)).apply()
+    }
     fun favorites(): Set<String> = preferences.getStringSet("favorites", emptySet())!!.toSet()
     fun saveFavorites(ids: Set<String>) { preferences.edit().putStringSet("favorites", ids).apply() }
 

@@ -1,15 +1,23 @@
 package com.harroyuz.ddrchartviewer.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -60,91 +68,145 @@ import kotlin.math.*
     val timeline = chart.timeline
     var position by rememberSaveable { mutableDoubleStateOf(timeline.start) }
     var playing by remember { mutableStateOf(false) }
-    var speed by rememberSaveable { mutableFloatStateOf(model.repository.store.speed(chart.mode)) }
-    var rate by rememberSaveable { mutableFloatStateOf(1f) }
-    var mirror by rememberSaveable { mutableStateOf(false) }
-    var reverse by rememberSaveable { mutableStateOf(false) }
-    var flip by rememberSaveable { mutableStateOf(false) }
-    var fixed by rememberSaveable { mutableStateOf(false) }
-    var settings by rememberSaveable { mutableStateOf(false) }
+    var settings by remember { mutableStateOf(model.repository.store.playerSettings(chart.mode)) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var rotaryKind by remember { mutableStateOf<PlayerNumber?>(null) }
+    var rotary by remember { mutableStateOf<RotaryAdjustment?>(null) }
+    var rotaryCenter by remember { mutableStateOf(Offset.Zero) }
+    var rotaryPointer by remember { mutableStateOf(Offset.Zero) }
+    var rootPosition by remember { mutableStateOf(Offset.Zero) }
+    val density = LocalDensity.current
+    fun update(next: PlayerSettings) {
+        settings = next.normalized()
+        model.repository.store.savePlayerSettings(chart.mode, settings)
+    }
+    fun finishRotary() { rotaryKind = null; rotary = null }
+    BackHandler(expanded || rotaryKind != null) {
+        if (rotaryKind != null) finishRotary() else expanded = false
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) playing = false }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(playing, rate) {
+    LaunchedEffect(playing, settings.rate) {
         if (playing) {
             var last = withFrameNanos { it }
             while (isActive) {
                 val now = withFrameNanos { it }
-                position = (position + (now - last) / 1_000_000_000.0 * rate).coerceAtMost(timeline.duration)
+                position = (position + (now - last) / 1_000_000_000.0 * settings.rate).coerceAtMost(timeline.duration)
                 last = now
                 if (position >= timeline.duration) { playing = false; break }
             }
         }
     }
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("BPM ${"%.1f".format(Locale.ROOT, timeline.bpmAt(position))}", color = Purple, style = MaterialTheme.typography.labelMedium)
-            Text("小节 ${(timeline.beatAt(position).coerceAtLeast(0.0) / 4).toInt() + 1} · ${chart.notes.size} 音符", color = Muted, style = MaterialTheme.typography.labelMedium)
-        }
-        ChartCanvas(chart, position, speed, mirror, flip, reverse, fixed, Modifier.weight(1f).fillMaxWidth()) { beatDelta ->
-            playing = false
-            position = timeline.timeAt((timeline.beatAt(position) + beatDelta).coerceIn(0.0, chart.endBeat)).coerceIn(timeline.start, timeline.duration)
-        }
-        Column(Modifier.padding(horizontal = 16.dp)) {
-            Slider(value = position.toFloat().coerceIn(timeline.start.toFloat(), timeline.duration.toFloat()), onValueChange = { playing = false; position = it.toDouble() }, valueRange = timeline.start.toFloat()..timeline.duration.toFloat())
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("${clock(position)} / ${clock(timeline.duration)}", color = Muted, style = MaterialTheme.typography.labelSmall)
-                Text("拖动谱面定位", color = Muted, style = MaterialTheme.typography.labelSmall)
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) {
-                TextButton({ playing = false; position = timeline.start }) { Text("重置") }
-                TextButton({ playing = false; position = timeline.timeAt((timeline.beatAt(position) - 4).coerceAtLeast(0.0)).coerceIn(timeline.start, timeline.duration) }) { Text("−小节") }
-                Button({ if (position >= timeline.duration) position = timeline.start; playing = !playing }) { Text(if (playing) "暂停" else "播放") }
-                TextButton({ playing = false; position = timeline.timeAt((timeline.beatAt(position) + 4).coerceAtMost(chart.endBeat)).coerceIn(timeline.start, timeline.duration) }) { Text("+小节") }
-                TextButton({ settings = !settings }) { Text(if (settings) "收起" else "设置") }
-            }
-            if (settings) Column(Modifier.heightIn(max = 230.dp).verticalScroll(rememberScrollState())) {
-                Text("Hi-Speed  ${"%.2f".format(Locale.ROOT, speed)}×", style = MaterialTheme.typography.labelMedium)
-                Slider(speed, { speed = it }, onValueChangeFinished = { model.repository.store.saveSpeed(chart.mode, speed) }, valueRange = .25f..6f, steps = 22)
-                Text("播放速率  ${"%.2f".format(Locale.ROOT, rate)}×", style = MaterialTheme.typography.labelMedium)
-                Slider(rate, { rate = it }, valueRange = .25f..2f, steps = 6)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(mirror, { mirror = !mirror }, { Text("MIRROR") })
-                    FilterChip(reverse, { reverse = !reverse }, { Text("REVERSE") })
-                    if (chart.mode == PlayMode.DP) FilterChip(flip, { flip = !flip }, { Text("FLIP") })
+    Box(Modifier.fillMaxSize().clipToBounds().onGloballyPositioned { rootPosition = it.positionInRoot() }) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 18.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("谱面播放器", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text("BPM ${"%.1f".format(Locale.ROOT, timeline.bpmAt(position))} · 小节 ${(timeline.beatAt(position).coerceAtLeast(0.0) / 4).toInt() + 1}", color = Muted, fontSize = 11.sp)
                 }
-                FilterChip(fixed, { fixed = !fixed }, { Text("固定流速（基准 300 BPM）") })
+                TextButton({ playing = false; position = timeline.start }, contentPadding = PaddingValues(0.dp), modifier = Modifier.width(38.dp)) { Text("重置", fontSize = 11.sp) }
+                TextButton({
+                    playing = false
+                    val beat = timeline.beatAt(position)
+                    val start = floor(beat / 4) * 4
+                    position = timeline.timeAt((if (beat <= start + .001) start - 4 else start).coerceAtLeast(0.0)).coerceIn(timeline.start, timeline.duration)
+                }, contentPadding = PaddingValues(0.dp), modifier = Modifier.width(34.dp).semantics { contentDescription = "上一小节" }) { Text("|‹", fontSize = 18.sp) }
+                TextButton({ if (position >= timeline.duration) position = timeline.start; playing = !playing }, contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.width(42.dp).semantics { contentDescription = if (playing) "暂停" else "播放" }) { Text(if (playing) "Ⅱ" else "▶", fontSize = 21.sp) }
+                TextButton({ playing = false; position = timeline.timeAt(((floor(timeline.beatAt(position) / 4) + 1) * 4).coerceIn(0.0, chart.endBeat)).coerceIn(timeline.start, timeline.duration) },
+                    contentPadding = PaddingValues(0.dp), modifier = Modifier.width(34.dp).semantics { contentDescription = "下一小节" }) { Text("›|", fontSize = 18.sp) }
             }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("${clock(position)} / ${clock(timeline.duration)}", color = Muted, fontSize = 10.sp)
+                Text("${chart.notes.size} 音符 · 拖动谱面定位", color = Muted, fontSize = 10.sp)
+            }
+            Slider(value = position.toFloat().coerceIn(timeline.start.toFloat(), timeline.duration.toFloat()), onValueChange = { playing = false; position = it.toDouble() },
+                valueRange = timeline.start.toFloat()..timeline.duration.toFloat(), modifier = Modifier.height(32.dp))
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                // Opening the panel must not change field geometry or FHS calibration.
+                val available = (maxHeight - 64.dp).coerceAtLeast(1.dp)
+                val tail = minOf(44.dp, available / 3)
+                val field = tail + playerFieldHeight((available - tail).value, settings.fieldHeight).dp
+                ChartCanvas(chart, position, settings, Modifier.height(field).fillMaxWidth()) { beatDelta ->
+                    playing = false
+                    position = timeline.timeAt((timeline.beatAt(position) + beatDelta).coerceIn(0.0, chart.endBeat)).coerceIn(timeline.start, timeline.duration)
+                }
+                PlayerConfigPanel(settings, chart.mode, expanded, { expanded = it }, ::update,
+                    onRotaryStart = { kind, point ->
+                        rotaryKind = kind; rotaryCenter = point; rotaryPointer = point
+                        val floating = settings.speedMode == SpeedMode.FHS
+                        rotary = when (kind) {
+                            PlayerNumber.HEIGHT -> RotaryAdjustment(settings.fieldHeight.toFloat(), 200f, 1000f)
+                            PlayerNumber.CONSTANT -> RotaryAdjustment(settings.constantMs.toFloat(), 100f, 10000f)
+                            PlayerNumber.SPEED -> if (floating) RotaryAdjustment(settings.greenNumber.toFloat(), 10f, 9999f) else RotaryAdjustment(settings.speed, .25f, 100f)
+                        }
+                    },
+                    onRotaryMove = { point ->
+                        rotaryPointer = point
+                        val delta = point - rotaryCenter
+                        val floating = settings.speedMode == SpeedMode.FHS
+                        val units = when (rotaryKind) { PlayerNumber.CONSTANT -> 2000f; PlayerNumber.HEIGHT -> 200f; else -> if (floating) 200f else 1f }
+                        rotary?.move(delta.x, delta.y, with(density) { 12.dp.toPx() }, units)?.let { value ->
+                            update(when (rotaryKind) {
+                                PlayerNumber.HEIGHT -> settings.copy(fieldHeight = value.roundToInt())
+                                PlayerNumber.CONSTANT -> settings.copy(constantMs = (value / 10).roundToInt() * 10)
+                                else -> if (floating) settings.copy(greenNumber = value.roundToInt()) else settings.copy(speed = value)
+                            })
+                        }
+                    }, onRotaryEnd = ::finishRotary,
+                    modifier = Modifier.align(Alignment.BottomCenter).heightIn(max = maxHeight * .75f).alpha(if (rotaryKind == null) 1f else 0f))
+            }
+        }
+        if (rotaryKind != null) {
+            val label = when (rotaryKind) {
+                PlayerNumber.HEIGHT -> "谱面区域高度 ${settings.fieldHeight}"
+                PlayerNumber.CONSTANT -> "Constant ${settings.constantMs} ms"
+                else -> settings.speedLabel()
+            }
+            PlayerRotaryOverlay(rotaryCenter - rootPosition, rotaryPointer - rootPosition, label)
         }
     }
 }
 
 @Composable private fun ChartCanvas(
-    chart: ChartData, position: Double, speed: Float, mirror: Boolean, flip: Boolean, reverse: Boolean, fixed: Boolean,
+    chart: ChartData, position: Double, settings: PlayerSettings,
     modifier: Modifier, seek: (Double) -> Unit,
 ) {
     val currentSeek by rememberUpdatedState(seek)
     val timeline = chart.timeline
     val times = remember(chart) { chart.notes.associateWith { timeline.timeAt(it.beat) to timeline.timeAt(it.endBeat) } }
-    Canvas(modifier.pointerInput(speed, reverse) { detectVerticalDragGestures { change, drag ->
-        change.consume(); currentSeek((-drag / (32.dp.toPx() * speed) * if (reverse) -1 else 1).toDouble())
+    val reverse = settings.reverse
+    Canvas(modifier.pointerInput(settings) { detectVerticalDragGestures { change, drag ->
+        val receptorMargin = minOf(44.dp.toPx(), size.height / 3f)
+        val pixels = playerPixelsPerBeat(settings, chart.bpms.first().value, size.height - receptorMargin, density)
+        change.consume(); currentSeek((-drag / pixels * if (reverse) -1 else 1).toDouble())
     } }) {
         val lanes = chart.mode.lanes
         val layout = playerLaneLayout(size.width, density, chart.mode)
         val fieldWidth = layout.width
         val laneWidth = layout.laneWidth
         val left = layout.left
-        val receptor = if (reverse) size.height - 44.dp.toPx() else 44.dp.toPx()
+        val margin = minOf(44.dp.toPx(), size.height / 3f)
+        val receptor = if (reverse) size.height - margin else margin
         val sign = if (reverse) -1f else 1f
-        val pixels = 32.dp.toPx() * speed
+        val pixels = playerPixelsPerBeat(settings, chart.bpms.first().value, size.height - margin, density)
         val currentBeat = timeline.beatAt(position)
-        fun y(beat: Double, time: Double = timeline.timeAt(beat)): Float = receptor + sign * (if (fixed) (time - position) * 5 else beat - currentBeat).toFloat() * pixels
+        fun y(beat: Double): Float = receptor + sign * (beat - currentBeat).toFloat() * pixels
+        fun alpha(time: Double) = if (settings.constant) constantAlpha(time - position, settings.constantMs) else 1f
+        fun bodyBrush(color: Color): Brush {
+            if (!settings.constant) return Brush.verticalGradient(listOf(color, color))
+            val end = y(timeline.beatAt(position + settings.constantMs / 1000.0))
+            val start = y(timeline.beatAt(position + settings.constantMs / 1000.0 - .1))
+            return Brush.verticalGradient(if (reverse) listOf(Color.Transparent, color) else listOf(color, Color.Transparent),
+                startY = min(start, end), endY = max(start, end).coerceAtLeast(min(start, end) + 1f))
+        }
         fun mapped(lane: Int): Int {
-            var value = if (mirror) (lane / 4) * 4 + (3 - lane % 4) else lane
-            if (flip && lanes == 8) value = (value + 4) % 8
+            var value = if (settings.mirror) (lane / 4) * 4 + (3 - lane % 4) else lane
+            if (settings.flip && lanes == 8) value = (value + 4) % 8
             return value
         }
         fun x(lane: Int): Float = layout.center(mapped(lane))
@@ -155,8 +217,8 @@ import kotlin.math.*
         }
         clipRect {
             val visibleBeats = size.height / pixels + 4
-            val first = if (fixed) 0 else (currentBeat - visibleBeats).toInt().coerceAtLeast(0)
-            val last = if (fixed) chart.endBeat.toInt() else min(chart.endBeat.toInt(), (currentBeat + visibleBeats).toInt() + 1)
+            val first = (currentBeat - visibleBeats).toInt().coerceAtLeast(0)
+            val last = min(chart.endBeat.toInt(), (currentBeat + visibleBeats).toInt() + 1)
             for (beat in first..last) {
                 val lineY = y(beat.toDouble())
                 if (lineY in 0f..size.height) drawLine(if (beat % 4 == 0) Color(0xFF425166) else Color(0xFF233144), Offset(left, lineY), Offset(left + fieldWidth, lineY), if (beat % 4 == 0) 2f else 1f)
@@ -164,27 +226,28 @@ import kotlin.math.*
             for (note in chart.notes) {
                 if (note.endBeat <= note.beat) continue
                 val time = times.getValue(note)
-                val head = y(note.beat, time.first); val tail = y(note.endBeat, time.second)
+                val head = y(note.beat); val tail = y(note.endBeat)
                 if (max(head, tail) < 0 || min(head, tail) > size.height || notePhase(position, time.first, time.second) == NotePhase.PASSED) continue
                 val activeHead = if (position >= time.first) receptor else head
                 val color = if (note.kind == NoteKind.ROLL) Color(0xFFFFA754) else Mint
-                drawLine(color.copy(alpha = .45f), Offset(x(note.lane), activeHead), Offset(x(note.lane), tail), laneWidth * .28f)
-                drawCircle(color, laneWidth * .13f, Offset(x(note.lane), tail))
+                drawLine(bodyBrush(color.copy(alpha = .45f)), Offset(x(note.lane), activeHead), Offset(x(note.lane), tail), laneWidth * .28f)
+                drawCircle(color.copy(alpha = alpha(time.second)), laneWidth * .13f, Offset(x(note.lane), tail))
             }
             for (note in chart.notes) {
                 val time = times.getValue(note)
                 val phase = notePhase(position, time.first, time.second)
                 // Remove the head at judgment time; sustained notes stay pinned until their tail ends.
                 if (phase == NotePhase.PASSED) continue
-                val noteY = if (phase == NotePhase.HOLDING) receptor else y(note.beat, time.first)
+                val noteY = if (phase == NotePhase.HOLDING) receptor else y(note.beat)
                 if (noteY !in -laneWidth..(size.height + laneWidth)) continue
-                val color = when (note.kind) {
+                val baseColor = when (note.kind) {
                     NoteKind.SHOCK -> Color(0xFFFF79C1)
                     NoteKind.HOLD -> Mint
                     NoteKind.ROLL -> Color(0xFFFFA754)
                     NoteKind.FAKE -> Color(0xFF9AAAC0).copy(alpha = .4f)
                     else -> beatColor(note.beat)
                 }
+                val color = baseColor.copy(alpha = baseColor.alpha * alpha(time.first))
                 if (note.kind == NoteKind.SHOCK) {
                     val center = Offset(x(note.lane), noteY)
                     drawCircle(color, laneWidth * .23f, center, style = Stroke(3.dp.toPx()))
