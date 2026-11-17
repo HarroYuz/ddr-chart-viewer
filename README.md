@@ -2,6 +2,8 @@
 
 一个使用 Kotlin 和 Jetpack Compose 实现的原生 Android DDR 谱面浏览器，参考 [IIDX Chart Viewer](https://github.com/HarroYuz/iidx-chart-viewer) 的结构、登录方式和本地播放器体验。
 
+当前版本：`0.1.0`（GitHub Release 标签：`v0.1.0`）。
+
 ## 功能
 
 - **曲库**：从 [3icecream 难度表](https://3icecream.com/difficulty_list/15) 及其共享曲目数据解析曲名、别名、版本、删除状态、等级与参考定数，覆盖 SP / DP、Lv.1–19。
@@ -67,7 +69,9 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ./gradlew -p android :app:assembleRelease
 ```
 
-Release 启用 R8 和资源压缩，默认生成**未签名** APK。分发正式版本前请配置自己的签名；本仓库不包含参考项目的签名文件、账户 Cookie 或本机 SDK 路径。
+Release 启用 R8 和资源压缩。本项目复用 IIDX Chart Viewer 的签名：在本机通过安全方式将 IIDX 项目的 `android/signing/` 复制到本项目相同目录，保留 `signing.properties` 和其引用的 keystore。存在此配置时，Debug 和 Release 均使用同一签名；不含配置的环境中，Debug 使用本机调试签名，Release 输出未签名 APK。
+
+已配置共享签名时，Release APK 位于 `android/app/build/outputs/apk/release/app-release.apk`。`android/signing/`、keystore 和本机 SDK 路径均被 Git 忽略，不能提交或上传到 Release；换机器构建同签名版本时需单独安全复制签名目录。GitHub Actions 不包含该签名，其 Debug artifact 仅用于验证。
 
 ## 验证公开数据
 

@@ -11,7 +11,8 @@
 - 33 项单元测试通过，0 失败。
 - Android Lint：0 error；仍有依赖新版本、WebView JavaScript 使用和 KTX 写法等建议。登录页需要 JavaScript；未增加原生 JavaScript bridge，也未将日志输出设为默认开启。
 - Debug APK 构建成功，可安装。
-- Release APK 构建成功，启用 R8/资源压缩；输出未签名，不表示已完成正式签名发布。
+- `v0.1.0` Release APK 构建成功，启用 R8/资源压缩，并使用用户指定的 IIDX 共享签名。
+- `apksigner verify` 检查通过，Debug / Release 的证书 SHA-256 均与 IIDX keystore 的证书一致；APK manifest 为 `versionName=0.1.0`、`versionCode=1`，Release 未开启调试模式。签名目录已被 Git 忽略。
 
 测试覆盖 JSON 提取与异常格式、SP/DP 槽位、参考定数缺失语义、单谱面 BPM 覆盖、长按匹配、停拍与延迟边界、时间轴双向换算、gRPC 帧/trailer/截断、未知 protobuf 字段、Skill 90 张分组、失败成绩排除、同分排序、重复成绩、未知曲目保留和曲名匹配。
 
@@ -27,6 +28,8 @@
 - 4 首真实曲目的 34 张 SP/DP 谱面均可解析，共 15,835 个音符对象；包含恒定 BPM、密集变速、停拍、长按和 Shock 样本。
 
 这些数量是当日源数据快照，不是永久覆盖率，也不表示未收录的谱面一定不存在。
+
+首次 GitHub Actions 在 SDK 安装阶段因旧的 `tools` 包已不可用而失败，尚未进入编译。工作流已改为只在 setup-android 阶段安装 `platform-tools`，随后显式安装 Android 36 SDK。
 
 ## 模拟器检查
 

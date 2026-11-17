@@ -1,4 +1,11 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+
+val sharedSigningProperties = rootProject.file("signing/signing.properties")
+val sharedSigning = Properties().takeIf { sharedSigningProperties.isFile }?.apply {
+    sharedSigningProperties.inputStream().use(::load)
+}
+val sharedSigningFile = sharedSigning?.getProperty("storeFile")?.let(rootProject::file)
 
 plugins {
     id("com.android.application")
@@ -14,14 +21,28 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+    signingConfigs {
+        if (sharedSigning != null && sharedSigningFile != null) {
+            create("sharedIidx") {
+                storeFile = sharedSigningFile
+                storePassword = sharedSigning.getProperty("storePassword")
+                keyAlias = sharedSigning.getProperty("keyAlias")
+                keyPassword = sharedSigning.getProperty("keyPassword")
+            }
+        }
     }
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (sharedSigning != null) signingConfig = signingConfigs.getByName("sharedIidx")
+        }
+        debug {
+            if (sharedSigning != null) signingConfig = signingConfigs.getByName("sharedIidx")
         }
     }
     buildFeatures { compose = true; buildConfig = true }

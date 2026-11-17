@@ -2,6 +2,7 @@ package com.harroyuz.ddrchartviewer.data
 
 import android.content.Context
 import android.util.AtomicFile
+import com.harroyuz.ddrchartviewer.BuildConfig
 import com.harroyuz.ddrchartviewer.data.local.LocalStore
 import com.harroyuz.ddrchartviewer.data.remote.bjm.BjmClient
 import com.harroyuz.ddrchartviewer.data.remote.icecream.IceCreamParser
@@ -94,7 +95,7 @@ class Repository(context: Context) {
         var bytes = files.sumOf { it.length() }
         for (file in files) { if (bytes <= 100L * 1024 * 1024) break; if (file != current) { val length = file.length(); if (file.delete()) bytes -= length } }
     }
-    private fun get(url: String): String = client.newCall(Request.Builder().url(url).header("User-Agent", "DDRChartViewer/1.0 (Android)").build()).execute().use {
+    private fun get(url: String): String = client.newCall(Request.Builder().url(url).header("User-Agent", "DDRChartViewer/${BuildConfig.VERSION_NAME} (Android)").build()).execute().use {
         check(it.isSuccessful) { "数据源请求失败（HTTP ${it.code}）" }
         it.body?.string() ?: error("数据源返回空内容")
     }
