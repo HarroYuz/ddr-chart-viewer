@@ -8,7 +8,7 @@
 ./gradlew -p android :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
 ```
 
-- 35 项单元测试通过，0 失败。
+- 40 项单元测试通过，0 失败。
 - Android Lint：0 error；仍有依赖新版本、WebView JavaScript 使用和 KTX 写法等建议。登录页需要 JavaScript；未增加原生 JavaScript bridge，也未将日志输出设为默认开启。
 - Debug APK 构建成功，可安装。
 - `v0.1.0` Release APK 构建成功，启用 R8/资源压缩，并使用用户指定的 IIDX 共享签名。
@@ -47,6 +47,14 @@
 - 新增合成回归用例，覆盖 `status=1` 与 `grpc-status=0` 的成绩响应，以及 `status=1` 不能掩盖 gRPC 认证失败；没有把真实账号资料或成绩保存到测试 fixture。
 - 修复后复用同一登录会话成功同步，成绩和 Flare 写入本地快照，SP / DP 的 Skill 与 IN TARGET 均显示对象谱面；覆盖安装后的会话可恢复。此项验证不等同于与网站逐条对账。
 - 将同签名、启用 R8 的 Release APK 覆盖安装到模拟器后再次同步成功，设置页同步时间更新；该 APK 将作为 Draft Release 附件。
+
+## 难度显示、曲库样式与播放器调整
+
+- 曲库、曲目详情、成绩和播放器共用难度组件，整数与两位小数同基线显示，小数使用较小字号。验证 `.05` 前导零、`.00` 和缺少定数时只显示整数。
+- 曲库采用 IIDX 的浅色紫色主题、侧边菜单、折叠筛选和紧凑卡片，同时保留缓存曲绘。模拟器核对 SP 五难度排列、Flare 罗马数字左下角、评级右下角，以及没有 Flare 时不显示角标。
+- 在手机宽度和宽屏宽度下测试 DP 八轨相邻中心距离一致，包括左右板交界；SP 轨距与 DP 相同，四轨整体居中。
+- 普通音符在判定时刻隐藏，长按头在持续区间固定于判定线，尾部结束后隐藏；测试停拍与延迟时相同 beat 对应的不同判定时刻，以及向前拖动后音符恢复。
+- 模拟器使用真实 SP / DP EXPERT 谱面检查播放、长按、Reverse 和固定流速；判定线后的已过音符不再继续滑出。
 
 ## 尚未实测
 

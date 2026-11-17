@@ -2,6 +2,9 @@ package com.harroyuz.ddrchartviewer.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -14,6 +17,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +36,7 @@ import com.harroyuz.ddrchartviewer.domain.*
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 @Composable fun AppScreen(state: AppState, model: AppViewModel, login: () -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -36,33 +46,60 @@ import java.util.Locale
     val entriesByKey = remember(state.entries) { state.entries.associateBy { it.score.key } }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.message) { state.message?.let { snackbar.showSnackbar(it); model.dismissMessage() } }
-    BackHandler(enabled = state.chartRef != null || songId != null) { if (state.chartRef != null) model.closeChart() else songId = null }
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = { if (state.chartRef == null && songId == null) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-            listOf("曲库" to "▤", "成绩" to "◈", "Skill" to "✧", "设置" to "☷").forEachIndexed { index, (label, glyph) ->
-                NavigationBarItem(selected = tab == index, onClick = { tab = index }, icon = { Text(glyph, fontSize = 23.sp) }, label = { Text(label) })
-            }
-        } },
-    ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            if (state.chartRef != null) {
-                ChartScreen(state, model)
-            } else {
-                if (song != null) SimpleTopBar("曲目详情") { songId = null }
-                else Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 18.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("DDR", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = Mint)
-                        Text("CHART VIEWER", style = MaterialTheme.typography.labelSmall, letterSpacing = 2.sp, color = Muted)
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    val uri = LocalUriHandler.current
+    val pages = listOf("曲库", "成绩", "Skill", "设置")
+    BackHandler(enabled = drawer.isOpen || state.chartRef != null || songId != null || tab != 0) {
+        when {
+            drawer.isOpen -> scope.launch { drawer.close() }
+            state.chartRef != null -> model.closeChart()
+            songId != null -> songId = null
+            else -> tab = 0
+        }
+    }
+    ModalNavigationDrawer(
+        drawerState = drawer, gesturesEnabled = state.chartRef == null && songId == null,
+        drawerContent = {
+            ModalDrawerSheet(modifier = Modifier.width(200.dp), drawerShape = RoundedCornerShape(0.dp)) {
+                Column(Modifier.fillMaxSize()) {
+                    Text("菜单", Modifier.padding(start = 24.dp, top = 8.dp, bottom = 16.dp), color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    pages.forEachIndexed { index, label ->
+                        NavigationDrawerItem(label = { Text(label) }, selected = tab == index,
+                            onClick = { tab = index; scope.launch { drawer.close() } },
+                            shape = RoundedCornerShape(0.dp), modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
                     }
-                    ModeSwitch(state.mode, model::mode)
+                    Spacer(Modifier.weight(1f))
+                    HorizontalDivider()
+                    Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp)) {
+                        Text("版本 ${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 11.sp)
+                        TextButton({ uri.openUri("https://github.com/HarroYuz/ddr-chart-viewer") }, contentPadding = PaddingValues(0.dp)) { Text("项目主页  ↗") }
+                    }
                 }
-                if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                if (song != null) SongDetail(song, state, matcher, entriesByKey, model)
-                else when (tab) {
-                    0 -> CatalogScreen(state, model, matcher, entriesByKey, { songId = it })
-                    1, 2 -> ScoreScreen(state, tab == 2, matcher, model.repository.jackets, login, model::syncScores) { ref -> songId = ref.songId; model.openChart(ref) }
-                    else -> SettingsScreen(state, model, login)
+            }
+        },
+    ) {
+        Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                if (state.chartRef != null) ChartScreen(state, model)
+                else {
+                    if (song != null) SimpleTopBar("曲目详情") { songId = null }
+                    else AppTopBar(pages[tab], { scope.launch { drawer.open() } }, menu = true) {
+                        OutlinedButton({ model.mode(if (state.mode == PlayMode.SP) PlayMode.DP else PlayMode.SP) },
+                            Modifier.width(64.dp).height(36.dp).semantics { contentDescription = "切换 SP/DP" }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text(state.mode.name) }
+                        Spacer(Modifier.width(12.dp))
+                        Surface(onClick = { tab = 1 }, shape = RoundedCornerShape(20.dp), color = Purple.copy(alpha = .12f),
+                            modifier = Modifier.size(40.dp).semantics { contentDescription = "BJMania 账户与成绩" }) {
+                            Box(contentAlignment = Alignment.Center) { Text(state.scores?.user?.name?.take(1)?.uppercase() ?: "♙", color = Purple, fontWeight = FontWeight.Bold) }
+                        }
+                    }
+                    if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (song != null) SongDetail(song, state, matcher, entriesByKey, model)
+                    else when (tab) {
+                        0 -> CatalogScreen(state, model, matcher, entriesByKey, { songId = it })
+                        1, 2 -> ScoreScreen(state, tab == 2, matcher, model.repository.jackets, login, model::syncScores) { ref -> songId = ref.songId; model.openChart(ref) }
+                        else -> SettingsScreen(state, model, login)
+                    }
                 }
             }
         }
@@ -87,36 +124,64 @@ import java.util.Locale
                 song.charts.any { it.mode == state.mode && (level == 0 || it.level == level) }
         }.sortedBy { CatalogMatcher.normalize(it.title) }
     }
+    var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     Column {
-        OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), singleLine = true,
-            placeholder = { Text("搜索曲名 / 别名") }, shape = RoundedCornerShape(16.dp))
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            FilterChip(level == 0, { level = 0 }, { Text("全部等级") })
-            (1..19).forEach { n -> FilterChip(level == n, { level = if (level == n) 0 else n }, { Text("$n") }) }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(search, { search = it }, modifier = Modifier.weight(1f), singleLine = true,
+                placeholder = { Text("搜索曲名 / 别名") }, shape = MaterialTheme.shapes.medium,
+                trailingIcon = { if (search.isNotEmpty()) IconButton({ search = "" }) { Text("×", fontSize = 20.sp) } })
+            IconButton({ filtersExpanded = !filtersExpanded }, Modifier.semantics { contentDescription = "展开或收起筛选" }) {
+                val color = if (filtersExpanded || level != 0 || favoritesOnly || showDeleted) Purple else Muted
+                Canvas(Modifier.size(22.dp)) {
+                    val path = Path().apply {
+                        moveTo(size.width * .1f, size.height * .2f); lineTo(size.width * .9f, size.height * .2f)
+                        lineTo(size.width * .6f, size.height * .55f); lineTo(size.width * .6f, size.height * .8f)
+                        lineTo(size.width * .4f, size.height * .9f); lineTo(size.width * .4f, size.height * .55f); close()
+                    }
+                    drawPath(path, color, style = Stroke(2.dp.toPx()))
+                }
+            }
         }
-        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("${songs.size} 首 · ${state.mode}", color = Muted, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-            TextButton({ favoritesOnly = !favoritesOnly }) { Text(if (favoritesOnly) "★ 已收藏" else "☆ 收藏") }
-            TextButton({ showDeleted = !showDeleted }) { Text(if (showDeleted) "含删除曲" else "稼动曲") }
+        AnimatedVisibility(filtersExpanded) {
+            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(vertical = 8.dp)) {
+                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(level == 0, { level = 0 }, { Text("全部等级") })
+                    (1..19).forEach { n -> FilterChip(level == n, { level = if (level == n) 0 else n }, { Text("$n") }) }
+                }
+                Row(Modifier.padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(favoritesOnly, { favoritesOnly = !favoritesOnly }, { Text("仅收藏") })
+                    FilterChip(showDeleted, { showDeleted = !showDeleted }, { Text("含删除曲") })
+                    TextButton({ level = 0; favoritesOnly = false; showDeleted = false }) { Text("重置") }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("${songs.size} 首曲目 · ${state.mode}", color = Muted, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+            Text(listOfNotNull(if (level > 0) "Lv.$level" else null, if (favoritesOnly) "已收藏" else null, if (showDeleted) "含删除曲" else null).joinToString(" · "), color = Purple, fontSize = 11.sp)
         }
         if (state.loading) EmptyState("正在读取本地曲库…")
         else if (state.catalog == null) EmptyState(if (state.busy) "正在下载曲目与 38 个难度列表…" else "尚无曲库缓存", "联网完成首次同步后，可离线浏览") { Button(onClick = { model.refresh() }, enabled = !state.busy) { Text("获取曲库") } }
         else if (songs.isEmpty()) EmptyState("没有匹配的曲目", "试试其他等级、模式或关键词")
-        else LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(songs, key = { it.id }) { song ->
-                Card(onClick = { select(song.id) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column(Modifier.padding(16.dp)) {
+                Card(onClick = { select(song.id) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, Outline)) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Jacket(song.id, song.title, model.repository.jackets, Modifier.size(64.dp))
+                            Jacket(song.id, song.title, model.repository.jackets, Modifier.size(52.dp))
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(versionName(song.version) + if (song.deleted) " · 删除曲" else "", color = Muted, style = MaterialTheme.typography.labelSmall)
-                                Text(song.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(versionName(song.version) + if (song.deleted) " · 删除曲" else "", color = Muted, fontSize = 10.sp)
+                                Text(song.title, color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
-                            TextButton({ model.favorite(song.id) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.width(40.dp)) { Text(if (song.id in state.favorites) "★" else "☆", fontSize = 23.sp) }
                         }
-                        Spacer(Modifier.height(12.dp))
-                        ChartButtons(song, state.mode, level, matcher, entries, model::openChart)
+                        Spacer(Modifier.height(9.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            ChartButtons(song, state.mode, level, matcher, entries, model::openChart, Modifier.weight(1f))
+                            Spacer(Modifier.width(6.dp))
+                            IconButton({ model.favorite(song.id) }, Modifier.size(36.dp).semantics { contentDescription = "收藏 ${song.title}" }) {
+                                Text(if (song.id in state.favorites) "★" else "☆", color = if (song.id in state.favorites) Purple else Muted, fontSize = 24.sp)
+                            }
+                        }
                     }
                 }
             }
@@ -124,16 +189,25 @@ import java.util.Locale
     }
 }
 
-@Composable private fun ChartButtons(song: Song, mode: PlayMode, filter: Int, matcher: CatalogMatcher, entries: Map<String, SkillEntry>, open: (ChartRef) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+@Composable private fun ChartButtons(song: Song, mode: PlayMode, filter: Int, matcher: CatalogMatcher, entries: Map<String, SkillEntry>, open: (ChartRef) -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         song.charts.filter { it.mode == mode }.forEach { chart ->
             val color = difficultyColor(chart.difficulty)
-            Surface(onClick = { open(chart) }, shape = RoundedCornerShape(10.dp), color = color.copy(alpha = if (filter == 0 || chart.level == filter) .12f else .04f), border = BorderStroke(1.dp, color.copy(alpha = .35f)), modifier = Modifier.weight(1f)) {
-                Column(Modifier.padding(vertical = 9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(chart.difficulty.shortName.take(3), color = color, style = MaterialTheme.typography.labelSmall, fontSize = 10.sp)
-                    Text("${chart.level}", fontWeight = FontWeight.Bold, fontSize = 23.sp)
-                    Text(chart.constant?.let { "%.2f".format(Locale.ROOT, it) } ?: "—", color = Muted, fontSize = 10.sp)
-                    Text(if (matcher.score(chart, entries) != null) "●" else " ", color = Mint, fontSize = 8.sp)
+            val score = matcher.score(chart, entries)?.score
+            Surface(onClick = { open(chart) }, shape = RoundedCornerShape(14.dp),
+                color = color.copy(alpha = if (filter == 0 || chart.level == filter) .13f else .04f),
+                border = BorderStroke(1.dp, color.copy(alpha = .55f)),
+                modifier = Modifier.size(width = 54.dp, height = 50.dp).semantics {
+                    contentDescription = "${chart.mode} ${chart.difficulty.shortName} ${chart.level}${difficultySuffix(chart.level, chart.constant).orEmpty()}"
+                }) {
+                Box(Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 3.dp)) {
+                    DifficultyNumber(chart.level, chart.constant, Modifier.align(Alignment.TopCenter), color, mainSize = 21.sp, fractionSize = 11.sp)
+                    if (score != null) {
+                        if (score.flare in 1..10) Text(ScoreLabels.flare(score.flare), color = color, fontSize = 10.sp, lineHeight = 11.sp,
+                            fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.align(Alignment.BottomStart))
+                        if (score.rank in 0..15) Text(ScoreLabels.rank(score.rank), color = Ink, fontSize = 10.sp, lineHeight = 11.sp,
+                            fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.align(Alignment.BottomEnd))
+                    }
                 }
             }
         }
@@ -144,7 +218,7 @@ import java.util.Locale
     val uri = LocalUriHandler.current
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Jacket(song.id, song.title, model.repository.jackets, Modifier.size(160.dp).align(Alignment.CenterHorizontally))
-        Text(versionName(song.version), color = Mint, style = MaterialTheme.typography.labelLarge)
+        Text(versionName(song.version), color = Purple, style = MaterialTheme.typography.labelLarge)
         Text(song.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         matcher.music(song)?.artist?.takeIf { it.isNotBlank() }?.let { Text(it, color = Muted) }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -156,10 +230,12 @@ import java.util.Locale
         song.charts.filter { it.mode == state.mode }.forEach { chart ->
             Card(onClick = { model.openChart(chart) }) {
                 Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row { Text("${chart.mode} ${chart.difficulty.shortName}", color = difficultyColor(chart.difficulty), modifier = Modifier.weight(1f)); Text("Lv.${chart.level}", fontWeight = FontWeight.Bold) }
-                    Text("参考定数 ${chart.constant?.let { "%.2f".format(Locale.ROOT, it) } ?: "暂无"}", color = Muted)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${chart.mode} ${chart.difficulty.shortName}", color = difficultyColor(chart.difficulty), modifier = Modifier.weight(1f))
+                        DifficultyNumber(chart.level, chart.constant, color = difficultyColor(chart.difficulty))
+                    }
                     matcher.score(chart, entries)?.let { ScoreDetail(it) } ?: Text("暂无已匹配成绩", color = Muted)
-                    Text("播放谱面  →", color = Mint)
+                    Text("播放谱面  →", color = Purple)
                 }
             }
         }
@@ -192,11 +268,11 @@ import java.util.Locale
         if (skillPage) {
             item {
                 val summaries = state.summaries.filter { it.mode == state.mode }
-                Card(colors = CardDefaults.cardColors(containerColor = Mint.copy(alpha = .1f))) {
+                Card(colors = CardDefaults.cardColors(containerColor = Purple.copy(alpha = .1f))) {
                     Column(Modifier.padding(20.dp).fillMaxWidth()) {
-                        Text("${state.mode} FLARE SKILL", color = Mint, letterSpacing = 2.sp, style = MaterialTheme.typography.labelMedium)
+                        Text("${state.mode} FLARE SKILL", color = Purple, letterSpacing = 2.sp, style = MaterialTheme.typography.labelMedium)
                         Text("${summaries.sumOf { it.total }}", fontSize = 44.sp, fontWeight = FontWeight.Black)
-                        Text(SkillRank.name(summaries.sumOf { it.total }), color = Mint, fontWeight = FontWeight.Bold)
+                        Text(SkillRank.name(summaries.sumOf { it.total }), color = Purple, fontWeight = FontWeight.Bold)
                         Text("${summaries.sumOf { it.count }} / 90 张对象谱面", color = Muted)
                         Spacer(Modifier.height(16.dp))
                         summaries.forEach { summary ->
@@ -233,7 +309,11 @@ import java.util.Locale
                         }
                         Text(entry.music?.title ?: "未匹配曲目 #${entry.score.musicId}", fontWeight = FontWeight.Bold, maxLines = 2)
                     }
-                    Text("${entry.score.mode} ${Difficulty.fromSlot(entry.score.slot).shortName} · Lv.${entry.music?.level(entry.score.slot) ?: "?"} · ${entry.music?.era?.name ?: "未知年代"}", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("${entry.score.mode} ${Difficulty.fromSlot(entry.score.slot).shortName}", color = Muted, style = MaterialTheme.typography.labelSmall)
+                        DifficultyNumber(entry.music?.level(entry.score.slot), chart?.constant, mainSize = 20.sp, fractionSize = 11.sp)
+                        Text(entry.music?.era?.name ?: "未知年代", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    }
                     ScoreDetail(entry)
                     if (chart == null) Text("尚未关联 3icecream 谱面", color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
@@ -246,10 +326,10 @@ import java.util.Locale
     val score = entry.score
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text("%,d".format(Locale.ROOT, score.score), fontWeight = FontWeight.Bold, fontSize = 24.sp, modifier = Modifier.weight(1f))
-        Text(ScoreLabels.rank(score.rank), color = Mint, fontWeight = FontWeight.Bold)
+        Text(ScoreLabels.rank(score.rank), color = Purple, fontWeight = FontWeight.Bold)
     }
     Text("${ScoreLabels.clear(score.clearKind)} · FLARE ${ScoreLabels.flare(score.flare)} · Skill ${entry.skill ?: "—"}", style = MaterialTheme.typography.bodySmall)
-    if (entry.inTarget) Text("IN TARGET", color = Mint, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+    if (entry.inTarget) Text("IN TARGET", color = Purple, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
     Text(date(score.time * 1000), color = Muted, style = MaterialTheme.typography.labelSmall)
 }
 

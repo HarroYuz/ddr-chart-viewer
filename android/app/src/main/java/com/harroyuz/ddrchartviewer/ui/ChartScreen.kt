@@ -35,13 +35,15 @@ import kotlin.math.*
 @Composable fun ChartScreen(state: AppState, model: AppViewModel) {
     val ref = state.chartRef ?: return
     val song = state.catalog?.songs?.find { it.id == ref.songId }
-    SimpleTopBar("${ref.mode} · ${ref.difficulty.shortName} ${ref.level}", model::closeChart)
+    AppTopBar("${ref.mode} · ${ref.difficulty.shortName}", model::closeChart) {
+        DifficultyNumber(ref.level, ref.constant, color = difficultyColor(ref.difficulty))
+    }
     Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
         Jacket(ref.songId, song?.title.orEmpty(), model.repository.jackets, Modifier.size(48.dp))
         Spacer(Modifier.width(12.dp))
-        Text(song?.title ?: state.chart?.title.orEmpty(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2)
+        Text(song?.title ?: state.chart?.title.orEmpty(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, modifier = Modifier.weight(1f))
     }
-    Text("参考定数 ${ref.constant?.let { "%.2f".format(Locale.ROOT, it) } ?: "暂无"} · 无音乐谱面播放", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), color = Muted, style = MaterialTheme.typography.labelSmall)
+    Text("无音乐谱面播放", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), color = Muted, style = MaterialTheme.typography.labelSmall)
     if (state.chartLoading) { EmptyState("正在读取谱面…"); return }
     if (state.chartError != null) {
         val uri = LocalUriHandler.current
@@ -84,7 +86,7 @@ import kotlin.math.*
     }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("BPM ${"%.1f".format(Locale.ROOT, timeline.bpmAt(position))}", color = Mint, style = MaterialTheme.typography.labelMedium)
+            Text("BPM ${"%.1f".format(Locale.ROOT, timeline.bpmAt(position))}", color = Purple, style = MaterialTheme.typography.labelMedium)
             Text("小节 ${(timeline.beatAt(position).coerceAtLeast(0.0) / 4).toInt() + 1} · ${chart.notes.size} 音符", color = Muted, style = MaterialTheme.typography.labelMedium)
         }
         ChartCanvas(chart, position, speed, mirror, flip, reverse, fixed, Modifier.weight(1f).fillMaxWidth()) { beatDelta ->
@@ -131,10 +133,10 @@ import kotlin.math.*
         change.consume(); currentSeek((-drag / (32.dp.toPx() * speed) * if (reverse) -1 else 1).toDouble())
     } }) {
         val lanes = chart.mode.lanes
-        val gutter = if (lanes == 8) 14.dp.toPx() else 0f
-        val fieldWidth = min(size.width - 32.dp.toPx(), lanes * 68.dp.toPx())
-        val laneWidth = (fieldWidth - gutter) / lanes
-        val left = (size.width - fieldWidth) / 2
+        val layout = playerLaneLayout(size.width, density, chart.mode)
+        val fieldWidth = layout.width
+        val laneWidth = layout.laneWidth
+        val left = layout.left
         val receptor = if (reverse) size.height - 44.dp.toPx() else 44.dp.toPx()
         val sign = if (reverse) -1f else 1f
         val pixels = 32.dp.toPx() * speed
@@ -145,7 +147,7 @@ import kotlin.math.*
             if (flip && lanes == 8) value = (value + 4) % 8
             return value
         }
-        fun x(lane: Int): Float { val mapped = mapped(lane); return left + (mapped + .5f) * laneWidth + if (mapped >= 4) gutter else 0f }
+        fun x(lane: Int): Float = layout.center(mapped(lane))
         drawRect(Color(0xFF080F19))
         for (lane in 0 until lanes) {
             val center = x(lane)
@@ -163,7 +165,7 @@ import kotlin.math.*
                 if (note.endBeat <= note.beat) continue
                 val time = times.getValue(note)
                 val head = y(note.beat, time.first); val tail = y(note.endBeat, time.second)
-                if (max(head, tail) < 0 || min(head, tail) > size.height || position > time.second + .1) continue
+                if (max(head, tail) < 0 || min(head, tail) > size.height || notePhase(position, time.first, time.second) == NotePhase.PASSED) continue
                 val activeHead = if (position >= time.first) receptor else head
                 val color = if (note.kind == NoteKind.ROLL) Color(0xFFFFA754) else Mint
                 drawLine(color.copy(alpha = .45f), Offset(x(note.lane), activeHead), Offset(x(note.lane), tail), laneWidth * .28f)
@@ -171,15 +173,16 @@ import kotlin.math.*
             }
             for (note in chart.notes) {
                 val time = times.getValue(note)
-                var noteY = y(note.beat, time.first)
-                if (note.endBeat > note.beat && position in time.first..time.second) noteY = receptor
-                else if (position > time.first + .09) continue
+                val phase = notePhase(position, time.first, time.second)
+                // Remove the head at judgment time; sustained notes stay pinned until their tail ends.
+                if (phase == NotePhase.PASSED) continue
+                val noteY = if (phase == NotePhase.HOLDING) receptor else y(note.beat, time.first)
                 if (noteY !in -laneWidth..(size.height + laneWidth)) continue
                 val color = when (note.kind) {
                     NoteKind.SHOCK -> Color(0xFFFF79C1)
                     NoteKind.HOLD -> Mint
                     NoteKind.ROLL -> Color(0xFFFFA754)
-                    NoteKind.FAKE -> Muted.copy(alpha = .4f)
+                    NoteKind.FAKE -> Color(0xFF9AAAC0).copy(alpha = .4f)
                     else -> beatColor(note.beat)
                 }
                 if (note.kind == NoteKind.SHOCK) {
@@ -187,6 +190,16 @@ import kotlin.math.*
                     drawCircle(color, laneWidth * .23f, center, style = Stroke(3.dp.toPx()))
                     drawLine(color, center - Offset(laneWidth * .18f, laneWidth * .18f), center + Offset(laneWidth * .18f, laneWidth * .18f), 3.dp.toPx())
                 } else arrow(Offset(x(note.lane), noteY), laneWidth * .75f, mapped(note.lane) % 4, color, false)
+            }
+            // Brief receptor feedback makes the disappearance read as a hit, including in reverse mode.
+            for (note in chart.notes) {
+                if (note.kind == NoteKind.FAKE) continue
+                val elapsed = position - times.getValue(note).first
+                if (elapsed >= 0 && elapsed < .12) {
+                    val fade = (1 - elapsed / .12).toFloat()
+                    arrow(Offset(x(note.lane), receptor), laneWidth * (.8f + .15f * (1 - fade)), mapped(note.lane) % 4,
+                        Color.White.copy(alpha = fade * .8f), false)
+                }
             }
             for (lane in 0 until lanes) arrow(Offset(x(lane), receptor), laneWidth * .8f, mapped(lane) % 4, Color.White.copy(alpha = .75f), true)
         }
