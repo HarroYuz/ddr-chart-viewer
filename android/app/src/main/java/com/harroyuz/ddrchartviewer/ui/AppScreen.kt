@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
     val song = state.catalog?.songs?.find { it.id == songId }
     val matcher = remember(state.catalog, state.scores?.music) { CatalogMatcher(state.catalog?.songs.orEmpty(), state.scores?.music.orEmpty()) }
     val entriesByKey = remember(state.entries) { state.entries.associateBy { it.score.key } }
+    val catalogScreenState = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.message) { state.message?.let { snackbar.showSnackbar(it); model.dismissMessage() } }
     val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -96,7 +97,7 @@ import kotlinx.coroutines.launch
                     if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     if (song != null) SongDetail(song, state, matcher, entriesByKey, model)
                     else when (tab) {
-                        0 -> CatalogScreen(state, model, matcher, entriesByKey, { songId = it })
+                        0 -> catalogScreenState.SaveableStateProvider("catalog") { CatalogScreen(state, model, matcher, entriesByKey) { songId = it } }
                         1, 2 -> ScoreScreen(state, tab == 2, matcher, model.repository.jackets, login, model::syncScores) { ref -> songId = ref.songId; model.openChart(ref) }
                         else -> SettingsScreen(state, model, login)
                     }
@@ -114,24 +115,27 @@ import kotlinx.coroutines.launch
 
 @Composable private fun CatalogScreen(state: AppState, model: AppViewModel, matcher: CatalogMatcher, entries: Map<String, SkillEntry>, select: (String) -> Unit) {
     var search by rememberSaveable { mutableStateOf("") }
-    var level by rememberSaveable { mutableIntStateOf(0) }
-    var favoritesOnly by rememberSaveable { mutableStateOf(false) }
-    var showDeleted by rememberSaveable { mutableStateOf(false) }
-    val songs = remember(state.catalog, search, level, state.mode, favoritesOnly, state.favorites, showDeleted) {
-        state.catalog?.songs.orEmpty().filter { song ->
-            (showDeleted || !song.deleted) && (!favoritesOnly || song.id in state.favorites) &&
-                (search.isBlank() || "${song.title} ${song.aliases}".contains(search.trim(), true)) &&
-                song.charts.any { it.mode == state.mode && (level == 0 || it.level == level) }
-        }.sortedBy { CatalogMatcher.normalize(it.title) }
+    var filter by rememberSaveable { mutableStateOf(CatalogFilter()) }
+    var order by rememberSaveable { mutableStateOf(CatalogOrder.TITLE) }
+    var descending by rememberSaveable { mutableStateOf(false) }
+    val songs = remember(state.catalog, state.mode, state.favorites, matcher, entries, search, filter, order, descending) {
+        browseCatalog(state.catalog?.songs.orEmpty(), state.mode, search, filter, state.favorites, order, descending, matcher, entries)
+    }
+    val tiers = remember(state.catalog, state.mode) {
+        state.catalog?.songs.orEmpty().flatMap { it.charts }.filter { it.mode == state.mode }
+            .map { it.tier() }.distinct().sortedBy { if (it == NO_TIER) 100 else it }
+    }
+    val versions = remember(state.catalog) {
+        (catalogVersions.values.flatten() + state.catalog?.songs.orEmpty().map { it.version }).distinct().sorted()
     }
     var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     Column {
         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(search, { search = it }, modifier = Modifier.weight(1f), singleLine = true,
-                placeholder = { Text("搜索曲名 / 别名") }, shape = MaterialTheme.shapes.medium,
+                placeholder = { Text(when { filter.searchTitles && filter.searchArtists -> "搜索曲名 / 曲师"; filter.searchArtists -> "搜索曲师"; filter.searchTitles -> "搜索曲名 / 别名"; else -> "请选择搜索范围" }) }, shape = MaterialTheme.shapes.medium,
                 trailingIcon = { if (search.isNotEmpty()) IconButton({ search = "" }) { Text("×", fontSize = 20.sp) } })
             IconButton({ filtersExpanded = !filtersExpanded }, Modifier.semantics { contentDescription = "展开或收起筛选" }) {
-                val color = if (filtersExpanded || level != 0 || favoritesOnly || showDeleted) Purple else Muted
+                val color = if (filtersExpanded || filter != CatalogFilter()) Purple else Muted
                 Canvas(Modifier.size(22.dp)) {
                     val path = Path().apply {
                         moveTo(size.width * .1f, size.height * .2f); lineTo(size.width * .9f, size.height * .2f)
@@ -143,27 +147,18 @@ import kotlinx.coroutines.launch
             }
         }
         AnimatedVisibility(filtersExpanded) {
-            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(vertical = 8.dp)) {
-                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(level == 0, { level = 0 }, { Text("全部等级") })
-                    (1..19).forEach { n -> FilterChip(level == n, { level = if (level == n) 0 else n }, { Text("$n") }) }
-                }
-                Row(Modifier.padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(favoritesOnly, { favoritesOnly = !favoritesOnly }, { Text("仅收藏") })
-                    FilterChip(showDeleted, { showDeleted = !showDeleted }, { Text("含删除曲") })
-                    TextButton({ level = 0; favoritesOnly = false; showDeleted = false }) { Text("重置") }
-                }
-            }
+            CatalogFilterPanel(filter, { filter = it }, tiers, versions)
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("${songs.size} 首曲目 · ${state.mode}", color = Muted, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-            Text(listOfNotNull(if (level > 0) "Lv.$level" else null, if (favoritesOnly) "已收藏" else null, if (showDeleted) "含删除曲" else null).joinToString(" · "), color = Purple, fontSize = 11.sp)
+            CatalogSortControls(order, descending, { order = it }, { descending = !descending })
         }
         if (state.loading) EmptyState("正在读取本地曲库…")
         else if (state.catalog == null) EmptyState(if (state.busy) "正在下载曲目与 38 个难度列表…" else "尚无曲库缓存", "联网完成首次同步后，可离线浏览") { Button(onClick = { model.refresh() }, enabled = !state.busy) { Text("获取曲库") } }
         else if (songs.isEmpty()) EmptyState("没有匹配的曲目", "试试其他等级、模式或关键词")
         else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(songs, key = { it.id }) { song ->
+            items(songs, key = { it.song.id }) { row ->
+                val song = row.song
                 Card(onClick = { select(song.id) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, Outline)) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -172,11 +167,15 @@ import kotlinx.coroutines.launch
                             Column(Modifier.weight(1f)) {
                                 Text(versionName(song.version) + if (song.deleted) " · 删除曲" else "", color = Muted, fontSize = 10.sp)
                                 Text(song.title, color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(row.artist.ifBlank { "曲师未收录" }, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (order == CatalogOrder.SCORE || order == CatalogOrder.FLARE) {
+                                Text("${order.label} ${row.value ?: "—"}", color = Purple, fontSize = 11.sp)
                             }
                         }
                         Spacer(Modifier.height(9.dp))
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            ChartButtons(song, state.mode, level, matcher, entries, model::openChart, Modifier.weight(1f))
+                            ChartButtons(row.charts, matcher, entries, model::openChart, Modifier.weight(1f))
                             Spacer(Modifier.width(6.dp))
                             IconButton({ model.favorite(song.id) }, Modifier.size(36.dp).semantics { contentDescription = "收藏 ${song.title}" }) {
                                 Text(if (song.id in state.favorites) "★" else "☆", color = if (song.id in state.favorites) Purple else Muted, fontSize = 24.sp)
@@ -189,13 +188,13 @@ import kotlinx.coroutines.launch
     }
 }
 
-@Composable private fun ChartButtons(song: Song, mode: PlayMode, filter: Int, matcher: CatalogMatcher, entries: Map<String, SkillEntry>, open: (ChartRef) -> Unit, modifier: Modifier = Modifier) {
+@Composable private fun ChartButtons(charts: List<ChartRef>, matcher: CatalogMatcher, entries: Map<String, SkillEntry>, open: (ChartRef) -> Unit, modifier: Modifier = Modifier) {
     Row(modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        song.charts.filter { it.mode == mode }.forEach { chart ->
+        charts.forEach { chart ->
             val color = difficultyColor(chart.difficulty)
             val score = matcher.score(chart, entries)?.score
             Surface(onClick = { open(chart) }, shape = RoundedCornerShape(14.dp),
-                color = color.copy(alpha = if (filter == 0 || chart.level == filter) .13f else .04f),
+                color = color.copy(alpha = .13f),
                 border = BorderStroke(1.dp, color.copy(alpha = .55f)),
                 modifier = Modifier.size(width = 54.dp, height = 50.dp).semantics {
                     contentDescription = "${chart.mode} ${chart.difficulty.shortName} ${chart.level}${difficultySuffix(chart.level, chart.constant).orEmpty()}"
@@ -220,7 +219,7 @@ import kotlinx.coroutines.launch
         Jacket(song.id, song.title, model.repository.jackets, Modifier.size(160.dp).align(Alignment.CenterHorizontally))
         Text(versionName(song.version), color = Purple, style = MaterialTheme.typography.labelLarge)
         Text(song.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        matcher.music(song)?.artist?.takeIf { it.isNotBlank() }?.let { Text(it, color = Muted) }
+        Text(song.artist.ifBlank { matcher.music(song)?.artist.orEmpty() }.ifBlank { "曲师未收录" }, color = Muted)
         Row(verticalAlignment = Alignment.CenterVertically) {
             ModeSwitch(state.mode, model::mode)
             Spacer(Modifier.weight(1f))
@@ -373,4 +372,3 @@ import kotlinx.coroutines.launch
     }
 }
 private fun date(millis: Long): String = if (millis <= 0) "暂无" else SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
-private fun versionName(version: Int) = listOf("未知版本", "DDR", "2ndMIX", "3rdMIX", "4thMIX", "5thMIX", "DDRMAX", "DDRMAX2", "EXTREME", "SuperNOVA", "SuperNOVA2", "X", "X2", "X3", "DDR 2013", "DDR 2014", "A", "A20", "A20 PLUS", "A3", "WORLD").getOrElse(version) { "版本 $version" }

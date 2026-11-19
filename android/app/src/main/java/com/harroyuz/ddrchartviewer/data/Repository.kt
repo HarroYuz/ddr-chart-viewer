@@ -37,7 +37,9 @@ class Repository(context: Context) {
     suspend fun refreshCatalog(force: Boolean = false, progress: (String) -> Unit = {}): Catalog = withContext(Dispatchers.IO) {
         catalogMutex.withLock {
             val old = runCatching { store.readCatalog() }.getOrNull()
-            if (!force && old != null && !due(old.updatedAt)) return@withLock old
+            if (!force && old != null && !due(old.updatedAt)) {
+                return@withLock if (due(old.artistsUpdatedAt)) updateArtists(old) else old
+            }
             progress("读取 3icecream 全曲库…")
             val parsed = IceCreamParser.catalog(get("https://3icecream.com/js/songdata.js"), System.currentTimeMillis())
             val chartsByKey = parsed.songs.flatMap { it.charts }.associateBy { it.key }
@@ -53,14 +55,59 @@ class Repository(context: Context) {
                     }
                 } } }.awaitAll().flatMap { it.entries }.associate { it.key to it.value }
             }
-            val next = parsed.copy(songs = parsed.songs.map { song -> song.copy(charts = song.charts.map { chart ->
+            val previous = old?.songs.orEmpty().associateBy { it.id }
+            val next = parsed.copy(songs = parsed.songs.map { song -> song.copy(artist = previous[song.id]?.artist.orEmpty(), charts = song.charts.map { chart ->
                 chart.copy(constant = pages[chart.key])
             }) }, updatedAt = System.currentTimeMillis())
             // Commit only after all 38 pages are valid. Failures leave the old snapshot intact.
             store.writeCatalog(next)
             catalogChanges.emit(next)
-            next
+            updateArtists(next)
         }
+    }
+
+    // Artist metadata is public. Make the playable catalog available while filling gaps.
+    private suspend fun updateArtists(catalog: Catalog): Catalog {
+        val music = try {
+            bjm.fetchMusicDatabase()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return catalog
+        }
+        val matcher = CatalogMatcher(catalog.songs, music)
+        val songs = catalog.songs.map { song ->
+            val artist = matcher.music(song)?.artist.orEmpty().ifBlank { song.artist }
+            song.copy(artist = artist)
+        }.toMutableList()
+        val withArtists = catalog.copy(songs = songs.toList())
+        store.writeCatalog(withArtists)
+        catalogChanges.emit(withArtists)
+
+        // Bound concurrent detail requests. On source failure retain progress for the next refresh.
+        var complete = true
+        for (batch in songs.indices.filter { songs[it].artist.isBlank() }.chunked(3)) {
+            val results = coroutineScope {
+                batch.map { index -> async {
+                    try {
+                        val artist = IceCreamParser.songArtist(get("https://3icecream.com/ddr/song_details/${songs[index].id}"))
+                        index to artist
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        index to null
+                    }
+                } }.awaitAll()
+            }
+            for ((index, artist) in results) {
+                if (artist == null) complete = false else songs[index] = songs[index].copy(artist = artist)
+            }
+            if (results.all { it.second == null }) break
+        }
+        val enriched = catalog.copy(songs = songs, artistsUpdatedAt = if (complete) System.currentTimeMillis() else 0L)
+        store.writeCatalog(enriched)
+        catalogChanges.emit(enriched)
+        return enriched
     }
 
     suspend fun syncScores(): ScoreSnapshot = withContext(Dispatchers.IO) {

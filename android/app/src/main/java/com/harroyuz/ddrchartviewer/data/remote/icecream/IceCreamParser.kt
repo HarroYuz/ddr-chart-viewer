@@ -57,6 +57,8 @@ object IceCreamParser {
         }
     }
 
+    fun songArtist(html: String): String = org.jsoup.Jsoup.parse(html).selectFirst(".sp-artist")?.text().orEmpty()
+
     fun chart(json: String, slot: Int): ChartData {
         require(slot in 0..8)
         val root = JSONObject(json)

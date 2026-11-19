@@ -70,7 +70,8 @@ class CatalogMatcher(songs: List<Song>, music: List<BjmMusic>) {
         ?.singleOrNull { it.slot == entry.score.slot && it.level == entry.music?.level(entry.score.slot) }
 
     companion object {
+        private val whitespace = Regex("\\s+")
         fun normalize(title: String): String = Normalizer.normalize(title, Normalizer.Form.NFKC)
-            .lowercase(Locale.ROOT).replace(Regex("\\s+"), "")
+            .lowercase(Locale.ROOT).replace(whitespace, "")
     }
 }

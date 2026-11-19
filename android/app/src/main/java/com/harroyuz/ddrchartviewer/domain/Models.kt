@@ -17,10 +17,10 @@ data class ChartRef(val songId: String, val slot: Int, val level: Int, val const
 
 data class Song(
     val id: String, val title: String, val aliases: String, val version: Int,
-    val deleted: Boolean, val charts: List<ChartRef>,
+    val deleted: Boolean, val charts: List<ChartRef>, val artist: String = "",
 )
 
-data class Catalog(val songs: List<Song>, val updatedAt: Long, val sourceUpdatedAt: Long = 0)
+data class Catalog(val songs: List<Song>, val updatedAt: Long, val sourceUpdatedAt: Long = 0, val artistsUpdatedAt: Long = 0)
 data class BjmUser(val id: String, val name: String, val email: String = "")
 data class BjmMusic(val id: Int, val title: String, val artist: String, val series: Int, val levels: List<Int>) {
     // The music database has a DP-BEGINNER placeholder; score/chart slots do not.

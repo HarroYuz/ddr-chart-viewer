@@ -29,14 +29,14 @@ class LocalStore(context: Context) {
             val id = song.getString("id")
             Song(id, song.getString("title"), song.optString("aliases"), song.getInt("version"), song.getBoolean("deleted"), song.getJSONArray("charts").objects().map {
                 ChartRef(id, it.getInt("slot"), it.getInt("level"), if (it.isNull("constant")) null else it.getDouble("constant"))
-            })
+            }, song.optString("artist"))
         }
-        Catalog(songs, o.getLong("updatedAt"), o.optLong("sourceUpdatedAt"))
+        Catalog(songs, o.getLong("updatedAt"), o.optLong("sourceUpdatedAt"), o.optLong("artistsUpdatedAt"))
     }
     fun writeCatalog(catalog: Catalog) = write("catalog.json", JSONObject().apply {
-        put("updatedAt", catalog.updatedAt); put("sourceUpdatedAt", catalog.sourceUpdatedAt)
+        put("updatedAt", catalog.updatedAt); put("sourceUpdatedAt", catalog.sourceUpdatedAt); put("artistsUpdatedAt", catalog.artistsUpdatedAt)
         put("songs", JSONArray(catalog.songs.map { song -> JSONObject().apply {
-            put("id", song.id); put("title", song.title); put("aliases", song.aliases); put("version", song.version); put("deleted", song.deleted)
+            put("id", song.id); put("title", song.title); put("aliases", song.aliases); put("artist", song.artist); put("version", song.version); put("deleted", song.deleted)
             put("charts", JSONArray(song.charts.map { chart -> JSONObject().apply { put("slot", chart.slot); put("level", chart.level); put("constant", chart.constant ?: JSONObject.NULL) } }))
         } }))
     })
