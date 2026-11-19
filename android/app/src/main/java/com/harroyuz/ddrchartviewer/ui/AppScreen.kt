@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -128,6 +129,7 @@ import kotlinx.coroutines.launch
     val versions = remember(state.catalog) {
         (catalogVersions.values.flatten() + state.catalog?.songs.orEmpty().map { it.version }).distinct().sorted()
     }
+    val resultList = key(state.mode, search, filter, order, descending) { rememberLazyListState() }
     var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     Column {
         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -156,7 +158,7 @@ import kotlinx.coroutines.launch
         if (state.loading) EmptyState("正在读取本地曲库…")
         else if (state.catalog == null) EmptyState(if (state.busy) "正在下载曲目与 38 个难度列表…" else "尚无曲库缓存", "联网完成首次同步后，可离线浏览") { Button(onClick = { model.refresh() }, enabled = !state.busy) { Text("获取曲库") } }
         else if (songs.isEmpty()) EmptyState("没有匹配的曲目", "试试其他等级、模式或关键词")
-        else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        else LazyColumn(Modifier.weight(1f), state = resultList, contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(songs, key = { it.song.id }) { row ->
                 val song = row.song
                 Card(onClick = { select(song.id) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, Outline)) {
@@ -170,6 +172,7 @@ import kotlinx.coroutines.launch
                                 Text(row.artist.ifBlank { "曲师未收录" }, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             if (order == CatalogOrder.SCORE || order == CatalogOrder.FLARE) {
+                                Spacer(Modifier.width(6.dp))
                                 Text("${order.label} ${row.value ?: "—"}", color = Purple, fontSize = 11.sp)
                             }
                         }
