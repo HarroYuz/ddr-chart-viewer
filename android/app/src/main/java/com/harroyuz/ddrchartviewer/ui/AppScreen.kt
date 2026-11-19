@@ -27,6 +27,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -218,30 +219,57 @@ import kotlinx.coroutines.launch
 
 @Composable private fun SongDetail(song: Song, state: AppState, matcher: CatalogMatcher, entries: Map<String, SkillEntry>, model: AppViewModel) {
     val uri = LocalUriHandler.current
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Jacket(song.id, song.title, model.repository.jackets, Modifier.size(160.dp).align(Alignment.CenterHorizontally))
-        Text(versionName(song.version), color = Purple, style = MaterialTheme.typography.labelLarge)
-        Text(song.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(song.artist.ifBlank { matcher.music(song)?.artist.orEmpty() }.ifBlank { "曲师未收录" }, color = Muted)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            ModeSwitch(state.mode, model::mode)
-            Spacer(Modifier.weight(1f))
-            TextButton({ model.favorite(song.id) }) { Text(if (song.id in state.favorites) "★ 已收藏" else "☆ 收藏曲目") }
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Jacket(song.id, song.title, model.repository.jackets, Modifier.size(60.dp))
+            Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                Text(versionName(song.version), color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text(song.title, color = Ink, fontSize = 18.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold)
+                Text(song.artist.ifBlank { matcher.music(song)?.artist.orEmpty() }.ifBlank { "曲师未收录" },
+                    color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+            val favorite = song.id in state.favorites
+            IconToggleButton(checked = favorite, onCheckedChange = { model.favorite(song.id) },
+                modifier = Modifier.semantics { contentDescription = "收藏曲目" }) {
+                Text(if (favorite) "★" else "☆", color = if (favorite) Purple else Muted, fontSize = 23.sp)
+            }
         }
-        Text("参考定数来自社区难度表，仅供选曲参考。", color = Muted, style = MaterialTheme.typography.bodySmall)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            ModeSwitch(state.mode, model::mode)
+            TextButton({ uri.openUri("https://3icecream.com/ddr/song_details/${song.id}") }) { Text("3icecream ↗") }
+        }
         song.charts.filter { it.mode == state.mode }.forEach { chart ->
-            Card(onClick = { model.openChart(chart) }) {
-                Column(Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("${chart.mode} ${chart.difficulty.shortName}", color = difficultyColor(chart.difficulty), modifier = Modifier.weight(1f))
-                        DifficultyNumber(chart.level, chart.constant, color = difficultyColor(chart.difficulty))
-                    }
-                    matcher.score(chart, entries)?.let { ScoreDetail(it) } ?: Text("暂无已匹配成绩", color = Muted)
-                    Text("播放谱面  →", color = Purple)
+            DetailChartRow(chart, matcher.score(chart, entries)) { model.openChart(chart) }
+        }
+    }
+}
+
+@Composable private fun DetailChartRow(chart: ChartRef, entry: SkillEntry?, open: () -> Unit) {
+    val accent = difficultyColor(chart.difficulty)
+    Surface(onClick = open, shape = MaterialTheme.shapes.small, color = accent.copy(alpha = .06f)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 12.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(chart.difficulty.shortName, color = accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                DifficultyNumber(chart.level, chart.constant, color = accent, mainSize = 21.sp, fractionSize = 11.sp)
+            }
+            Column(Modifier.weight(2f), horizontalAlignment = Alignment.End) {
+                if (entry == null) {
+                    Text("暂无成绩", color = Muted, style = MaterialTheme.typography.bodySmall)
+                } else {
+                    val score = entry.score
+                    Text("${"%,d".format(Locale.ROOT, score.score)}  ${ScoreLabels.rank(score.rank)}", color = Ink,
+                        fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("${ScoreLabels.clear(score.clearKind)} · FLARE ${ScoreLabels.flare(score.flare)} · Skill ${entry.skill ?: "—"}",
+                        color = Muted, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.End)
+                    Text(listOfNotNull(if (entry.inTarget) "IN TARGET" else null, date(score.time * 1000)).joinToString(" · "),
+                        color = if (entry.inTarget) Purple else Muted, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.End)
                 }
             }
         }
-        TextButton({ uri.openUri("https://3icecream.com/ddr/song_details/${song.id}") }) { Text("在 3icecream 查看曲目 / 视频") }
     }
 }
 
